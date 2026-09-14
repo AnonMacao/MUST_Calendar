@@ -1,4 +1,4 @@
-# This workflow runs every day at 04:17 in Asia/Macau.
+# This workflow runs every day at 06:00 in Asia/Macau.
 name: Update TimeTable Everyday
 
 env:
@@ -19,11 +19,14 @@ env:
   # zh_MO for Chinese, en_US for English
   LOCALE: "zh_MO"
 
+  # Optional OA eventType whitelist; empty uses the program's safe defaults.
+  OA_ALLOWED_EVENT_TYPES: ${{ vars.OA_ALLOWED_EVENT_TYPES }}
+
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 4 * * *'
+    - cron: '0 6 * * *'
       timezone: 'Asia/Macau'
 
 permissions:
@@ -62,7 +65,10 @@ jobs:
       run: |
         git config --global user.email calRobot@github.com
         git config --global user.name githubAction
-        git add -f "output/${USERNAME}.ics"
+        git add -A -f -- output/oa.ics
+        if [ -n "$(git ls-files -- ':(glob)output/courses/*.ics')" ] || [ -n "$(find output/courses -maxdepth 1 -type f -name '*.ics' -print -quit)" ]; then
+          git add -A -f -- ':(glob)output/courses/*.ics'
+        fi
         if ! git diff --cached --quiet; then
           git commit -m "update"
         fi

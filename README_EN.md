@@ -2,14 +2,14 @@
 
 [English](README_EN.md) | [简体中文](README.md)
 
-Merge the Macau University of Science and Technology student timetable and WeMust OA schedule into one ICS subscription for iOS, Android, HarmonyOS, macOS, and Windows calendars.
+Export the Macau University of Science and Technology student timetable and WeMust OA schedule as separate ICS subscriptions for iOS, Android, HarmonyOS, macOS, and Windows calendars.
 
 The program signs in to MUST CAS once and then reads:
 
 - Student timetable: course names, rooms, teachers, and lesson times
 - WeMust OA schedule: activities, meetings, holidays, and other personal events
 
-`CLASS_TIMETABLE` events duplicated by OA are excluded, so course data remains authoritative from the student timetable API. The only generated file is `output/[StudentID].ics`.
+Each course is exported to `output/courses/<courseCode>.ics`, with a readable calendar name. Filtered OA events are exported to `output/oa.ics`. An empty OA calendar is still written so its subscription URL remains stable.
 
 ## Local setup
 
@@ -22,6 +22,7 @@ The program signs in to MUST CAS once and then reads:
     PASSWORD=Your WeMust password
     ALERT=30
     LOCALE=en_US
+    OA_ALLOWED_EVENT_TYPES=EXAM,MEETING,PERSONAL
     CHROMEDRIVER_PATH=.venv/bin/chromedriver
     ```
 
@@ -35,7 +36,7 @@ The program signs in to MUST CAS once and then reads:
     python ./main.py
     ```
 
-`TERM_CODES` accepts comma-separated four-digit term codes. OA events run from the first day of the earliest configured term month through one year after the current date. They include every available event type from the sidebar filter plus both joined and managed events; ignored events are excluded.
+`TERM_CODES` accepts comma-separated four-digit term codes. The complete timetable is fetched once per term, then grouped locally. OA events run from the first day of the earliest configured term month through one year after the current date. `OA_ALLOWED_EVENT_TYPES` is an optional comma-separated `eventType` whitelist; when unset, the default is `PERSONAL`, `EXAM`, `MEETING`, and `LEAVE_CALENDER`. Ignored and `CLASS_TIMETABLE` events are always excluded. If the API supplies both `isJoin` and `isManage`, events with neither flag set are excluded. Stale `.ics` files in `output/courses` are removed after a successful fetch.
 
 ## GitHub Actions deployment
 
@@ -43,13 +44,13 @@ The program signs in to MUST CAS once and then reads:
 2. Add these repository secrets under `Settings` → `Security` → `Secrets and variables` → `Actions`:
    - `USERNAME`: student ID
    - `PASSWORD`: WeMust password
-3. Set `TERM_CODES`, `ALERT`, and `LOCALE` in [.github/workflows/python-app.yml](.github/workflows/python-app.yml).
-4. Run `Update Calendar Everyday` once and verify that `output/[StudentID].ics` is created.
+3. Set `TERM_CODES`, `ALERT`, and `LOCALE` in [.github/workflows/python-app.yml](.github/workflows/python-app.yml). Optionally set `OA_ALLOWED_EVENT_TYPES` as an Actions repository variable.
+4. Run `Update TimeTable Everyday` once and verify `output/courses/*.ics` and `output/oa.ics` are created.
 
 Subscription URL:
 
 ```text
-https://raw.githubusercontent.com/yourGitHubAccount/MUST_Calendar/refs/heads/main/output/[StudentID].ics
+https://raw.githubusercontent.com/yourGitHubAccount/MUST_Calendar/main/output/courses/ECON2001.ics
 ```
 ## TODO
 

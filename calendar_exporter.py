@@ -25,6 +25,7 @@ class CalendarEvent:
     end: date | datetime
     location: str = ""
     description: str = ""
+    course_code: str = ""
 
     def __post_init__(self) -> None:
         start_is_datetime = isinstance(self.start, datetime)
@@ -64,6 +65,7 @@ class UnifiedCalendarExporter:
         events: Iterable[CalendarEvent],
         trigger_minutes: int = 30,
         generated_at: datetime | None = None,
+        calendar_name: str = CALENDAR_PRODID,
     ) -> Calendar:
         if trigger_minutes < 0:
             raise ValueError("Reminder minutes must not be negative")
@@ -88,7 +90,7 @@ class UnifiedCalendarExporter:
         calendar = Calendar()
         calendar.add("version", "2.0")
         calendar.add("prodid", CALENDAR_PRODID)
-        calendar.add("x-wr-calname", CALENDAR_PRODID)
+        calendar.add("x-wr-calname", calendar_name)
 
         for calendar_event in sorted(unique_events.values(), key=_event_sort_key):
             component = Event()
@@ -125,11 +127,14 @@ class UnifiedCalendarExporter:
         events: Iterable[CalendarEvent],
         trigger_minutes: int = 30,
         generated_at: datetime | None = None,
+        output_path: Path | None = None,
+        calendar_name: str = CALENDAR_PRODID,
     ) -> Path:
-        calendar = self.build(events, trigger_minutes, generated_at)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_bytes(calendar.to_ical())
-        return self.output_path
+        calendar = self.build(events, trigger_minutes, generated_at, calendar_name)
+        path = output_path or self.output_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(calendar.to_ical())
+        return path
 
 
 def _event_sort_key(calendar_event: CalendarEvent) -> tuple[datetime, str]:

@@ -34,6 +34,10 @@ OA_SCHEDULE_REFERER = "https://oa-schedule-new-wmweb.must.edu.mo/"
 OA_SCHEDULE_API_SALT = "wm_oa_schedule_new"
 OA_SCHEDULE_SERVICE_CODE = "S-WM-SCHEDULE-NEW"
 OA_ALL_DAY_EVENT_TYPES = {"LEAVE_CALENDER"}
+# Conservative default; set OA_ALLOWED_EVENT_TYPES to replace this list.
+DEFAULT_OA_ALLOWED_EVENT_TYPES = frozenset(
+    {"PERSONAL", "EXAM", "MEETING", "LEAVE_CALENDER"}
+)
 MACAU_TIMEZONE = ZoneInfo("Asia/Macau")
 REQUEST_TIMEOUT_SECONDS = 30
 
@@ -150,7 +154,7 @@ class ClassTimetableSource:
             description = f"教師姓名: {teacher}" if teacher else ""
 
         if not summary:
-            raise SourceDataError(f"Class timetable lesson {lesson_id} has no title")
+            summary = f"Course {lesson_id}" if self.locale == "en_US" else f"課程 {lesson_id}"
 
         return CalendarEvent(
             source="class-timetable",
@@ -160,6 +164,7 @@ class ClassTimetableSource:
             end=end,
             location=location,
             description=description,
+            course_code=_text(lesson.get("courseCode")),
         )
 
 
@@ -170,10 +175,20 @@ class OAScheduleSource:
         locale: str = "zh_MO",
         session: requests.Session | None = None,
         nonce_factory: Callable[[], str] | None = None,
+        allowed_event_types: Iterable[str] | None = None,
     ):
         self.locale = locale
         self.session = session or requests.Session()
         self.nonce_factory = nonce_factory or (lambda: secrets.token_hex(16))
+        self.allowed_event_types = (
+            frozenset(
+                _text(value).upper()
+                for value in allowed_event_types
+                if _text(value)
+            )
+            if allowed_event_types is not None
+            else DEFAULT_OA_ALLOWED_EVENT_TYPES
+        )
         self.headers = _request_headers(
             OA_SCHEDULE_REFERER,
             f"wm.schedule.sid={cookie_value}",
@@ -284,11 +299,9 @@ class OAScheduleSource:
         self,
         raw_event: Mapping[str, Any],
     ) -> CalendarEvent | None:
-        if _is_true(raw_event.get("isIgnore")):
+        if not should_include_oa_event(raw_event, self.allowed_event_types):
             return None
         event_type = _text(raw_event.get("eventType")).upper()
-        if event_type == "CLASS_TIMETABLE":
-            return None
 
         event_id = raw_event.get("id")
         if event_id is None:
@@ -337,6 +350,20 @@ class OAScheduleSource:
             location=_text(raw_event.get("address")),
             description=_plain_text(raw_event.get("remark")),
         )
+
+
+def should_include_oa_event(
+    raw_event: Mapping[str, Any], allowed_event_types: frozenset[str]
+) -> bool:
+    if _is_true(raw_event.get("isIgnore")):
+        return False
+    event_type = _text(raw_event.get("eventType")).upper()
+    if event_type == "CLASS_TIMETABLE" or event_type not in allowed_event_types:
+        return False
+    # When the API supplies both participation flags, exclude visible public items.
+    if "isJoin" in raw_event and "isManage" in raw_event:
+        return _is_true(raw_event["isJoin"]) or _is_true(raw_event["isManage"])
+    return True
 
 
 def build_signature(params: Mapping[str, Any], salt: str) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from calendar_exporter import UnifiedCalendarExporter
+from calendar_exporter import CalendarEvent, UnifiedCalendarExporter
 from login import Login
 from sources import ClassTimetableSource, OAScheduleSource
 
@@ -32,6 +33,7 @@ class Configuration:
     password: str
     alert_minutes: int
     locale: str
+    oa_allowed_event_types: tuple[str, ...] | None = None
 
     @classmethod
     def from_environment(cls) -> "Configuration":
@@ -39,6 +41,17 @@ class Configuration:
         username = os.environ.get("USERNAME", "").strip()
         password = os.environ.get("PASSWORD", "")
         locale = os.environ.get("LOCALE", "zh_MO").strip() or "zh_MO"
+        # Optional comma-separated eventType whitelist, e.g. EXAM,MEETING,PERSONAL.
+        allowed_types_value = os.environ.get("OA_ALLOWED_EVENT_TYPES", "").strip()
+        allowed_types = (
+            tuple(
+                part.strip().upper()
+                for part in allowed_types_value.split(",")
+                if part.strip()
+            )
+            if allowed_types_value
+            else None
+        )
 
         if not username or not password:
             raise ConfigurationError("USERNAME and PASSWORD are required")
@@ -60,6 +73,7 @@ class Configuration:
             password=password,
             alert_minutes=alert_minutes,
             locale=locale,
+            oa_allowed_event_types=allowed_types,
         )
 
 
@@ -83,6 +97,71 @@ def earliest_term_start(term_codes: tuple[str, ...]) -> date:
         date(2000 + int(term_code[:2]), int(term_code[2:]), 1)
         for term_code in term_codes
     )
+
+
+def course_filename(event: CalendarEvent) -> str:
+    code = event.course_code.strip().upper()
+    if code:
+        stem = re.sub(r"[^A-Z0-9_-]+", "-", code).strip("-_")
+        if stem != code:
+            stem = f"{stem or 'COURSE'}-{hashlib.sha256(code.encode()).hexdigest()[:10]}"
+    else:
+        name = event.summary.strip()
+        slug = re.sub(r"[^A-Z0-9_-]+", "-", name.upper()).strip("-_")[:48]
+        stem = f"{slug or 'COURSE'}-{hashlib.sha256(name.encode()).hexdigest()[:10]}"
+    if len(stem) > 80:
+        stem = f"{stem[:68].rstrip('-_')}-{hashlib.sha256(code.encode()).hexdigest()[:10]}"
+    if stem in {"CON", "PRN", "AUX", "NUL"} or re.fullmatch(
+        r"COM[1-9]|LPT[1-9]", stem
+    ):
+        stem = f"COURSE-{stem}"
+    return f"{stem}.ics"
+
+
+def group_course_events(
+    events: list[CalendarEvent],
+) -> dict[str, list[CalendarEvent]]:
+    groups: dict[str, list[CalendarEvent]] = {}
+    identities: dict[str, str] = {}
+    for event in events:
+        filename = course_filename(event)
+        identity = event.course_code.strip().upper() or event.summary.strip()
+        if filename in identities and identities[filename] != identity:
+            raise ValueError(f"Course filename collision: {filename}")
+        identities[filename] = identity
+        groups.setdefault(filename, []).append(event)
+    return groups
+
+
+def export_calendars(
+    class_events: list[CalendarEvent],
+    oa_events: list[CalendarEvent],
+    alert_minutes: int,
+    output_dir: Path = Path("output"),
+) -> Path:
+    exporter = UnifiedCalendarExporter("oa", output_dir=output_dir)
+    groups = group_course_events(class_events)
+    courses_dir = output_dir / "courses"
+    courses_dir.mkdir(parents=True, exist_ok=True)
+    # Only remove .ics files managed inside output/courses after a successful fetch.
+    for old_file in courses_dir.glob("*.ics"):
+        if old_file.name not in groups:
+            old_file.unlink()
+    for filename, events in groups.items():
+        exporter.export(
+            events,
+            trigger_minutes=alert_minutes,
+            output_path=courses_dir / filename,
+            calendar_name=events[0].summary,
+        )
+    # Keep an empty OA calendar so its subscription URL remains stable.
+    exporter.export(
+        oa_events,
+        trigger_minutes=alert_minutes,
+        output_path=output_dir / "oa.ics",
+        calendar_name="WeMust OA",
+    )
+    return output_dir
 
 
 def run(configuration: Configuration) -> Path:
@@ -112,14 +191,16 @@ def run(configuration: Configuration) -> Path:
     oa_events = OAScheduleSource(
         oa_cookie,
         locale=configuration.locale,
+        allowed_event_types=configuration.oa_allowed_event_types,
     ).fetch(earliest_term_start(configuration.term_codes), end_date)
     print(f"Success: {len(oa_events)} OA schedule events found")
 
-    output_path = UnifiedCalendarExporter(configuration.username).export(
-        [*class_events, *oa_events],
-        trigger_minutes=configuration.alert_minutes,
+    output_path = export_calendars(
+        class_events,
+        oa_events,
+        configuration.alert_minutes,
     )
-    print(f"Success: {output_path} created")
+    print(f"Success: calendars created in {output_path}")
     return output_path
 
 
