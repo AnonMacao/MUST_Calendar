@@ -59,7 +59,18 @@ jobs:
         
     - name: run mainCode
       run: |
-        python ./main.py
+        # A hosted Chrome session can occasionally terminate during CAS login.
+        # Start a fresh browser and retry transient failures before failing the run.
+        for attempt in 1 2 3; do
+          if python ./main.py; then
+            exit 0
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            echo "Calendar update failed on attempt $attempt; retrying in 20 seconds..."
+            sleep 20
+          fi
+        done
+        exit 1
 
     - name: commit
       run: |
