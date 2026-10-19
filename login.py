@@ -13,6 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 LOGIN_URL = "https://login.must.edu.mo/login"
 LOGIN_TIMEOUT_SECONDS = 30
+PAGE_LOAD_TIMEOUT_SECONDS = 45
 
 
 class Login:
@@ -31,6 +32,7 @@ class Login:
             else Service()
         )
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        self.driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
         self.wait = WebDriverWait(self.driver, LOGIN_TIMEOUT_SECONDS)
         self.username = username
         self.password = password
